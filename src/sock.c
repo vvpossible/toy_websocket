@@ -122,54 +122,62 @@ static sock_cb_ops_t default_callbacks =
 static s16 tcp_sk_send(sock_cb_t* sk_cb, s8* data, s32 dlen)
 {
     s32 ret;
-    cong_block_t *cb, *tmp;
+    cong_block_t* block = NULL;
 
-    list_for_each_entry_safe(cb, tmp, &(sk_cb->cong_q_head), cong_list)
+    /* we are in congestion state */
+    if (!list_empty(&(sk_cb->cong_q_head)))
+        goto cong;
+    else
     {
-        dbg(WS_WARN, "retransmit congestion data first.\n");
-        ret = send(sk_cb->sock_fd, cb->buf, cb->len, 0);
-        if(ret < 0)          /* give up */
-            return rfail;
-
-        dbg(WS_WARN, "succeed to send congestion block.\n");
-        list_del(&(cb->cong_list));
-        mem_free(cb->buf);
-        cb->buf = NULL;
-        mem_free(cb);
-        cb = NULL;
-    }
-
-    ret = send(sk_cb->sock_fd, data, dlen, 0);
-
-    if(ret < 0)
-    {
-        dbg(WS_ERR, "unable to send.\n");
-
-        if(errno != EAGAIN && errno != EWOULDBLOCK)
+        ret = send(sk_cb->sock_fd, data, dlen, 0);
+        if(ret < 0)
         {
-            dbg(WS_ERR, "failed to send, notify upper layer.\n");
-            return rfail;
-        }
+            dbg(WS_ERR, "unable to send.\n");
+
+            if(errno != EAGAIN && errno != EWOULDBLOCK)
+            {
+                dbg(WS_ERR, "failed to send, notify upper layer.\n");
+                return rfail;
+            }
         
-        dbg(WS_WARN, "congestion happened, cache the buffer.\n");
+            dbg(WS_WARN, "congestion happened, cache the buffer.\n");
 
-        cong_block_t* block = mem_alloc(sizeof(cong_block_t));
-        if(!block)
-            return rfail;
+            struct epoll_event ev;
+            /* turn on epollout */
+            ev.events = EPOLLIN | EPOLLERR | EPOLLOUT;
+            ev.data.ptr = sk_cb;
 
-        bzero(block, sizeof(cong_block_t));
-        block->buf = mem_alloc(dlen);
-        if(!block->buf)
-        {
-            mem_free(block);
-            return rfail;
+            if (epoll_ctl(sk_cp->epoll_fd, EPOLL_CTL_MOD, sk_cb->sock_fd,
+                          &ev) == -1) 
+            {
+                dbg(WS_ERR, "failed to call epoll_ctl.\n");
+                return rfail;
+            }
+
+            goto cong;
         }
-        memcpy(block->buf, data, dlen);
-        block->len = dlen;
-
-        dbg(WS_WARN, "cache the unsent buffer in queue.\n");
-        list_add_tail(&(block->cong_list), &(sk_cb->cong_q_head));
     }
+
+    return rok;
+
+cong:
+    block = mem_alloc(sizeof(cong_block_t));
+
+    if(!block)
+        return rfail;
+
+    bzero(block, sizeof(cong_block_t));
+    block->buf = mem_alloc(dlen);
+    if(!block->buf)
+    {
+        mem_free(block);
+        return rfail;
+    }
+    memcpy(block->buf, data, dlen);
+    block->len = dlen;
+
+    dbg(WS_WARN, "cache the unsent buffer in queue.\n");
+    list_add_tail(&(block->cong_list), &(sk_cb->cong_q_head));
 
     return rok;
 }
@@ -320,6 +328,7 @@ static void free_sock_cb(sock_cb_t* sk_cb)
 
     mem_free(sk_cb);
 }
+
 
 static void server_spin()
 {
@@ -499,6 +508,41 @@ static s16 tcp_sock_proc_event(struct epoll_event* ev, sock_action_t* action)
     else if(ev->events | EPOLLOUT)
     {
         dbg(WS_INFO, "socket become writable.\n");
+        cong_block_t *cb, *tmp;
+
+        list_for_each_entry_safe(cb, tmp, &(sk_cb->cong_q_head), cong_list)
+        {
+            dbg(WS_WARN, "retransmit congestion data.\n");
+            ret = send(sk_cb->sock_fd, cb->buf, cb->len, 0);
+            if(ret < 0)
+            {
+                dbg(WS_ERR, "failed to transmit congestion data, close socket.\n");
+                break;
+            }
+            dbg(WS_WARN, "succeed to send congestion block.\n");
+            list_del(&(cb->cong_list));
+            mem_free(cb->buf);
+            cb->buf = NULL;
+            mem_free(cb);
+            cb = NULL;
+        }
+        if(list_empty(&(sk_cb->cong_q_head)))
+        {
+            dbg(WS_WARN, "all congestion block transmitted.\n");
+
+            struct epoll_event ev;
+            /* turn off epollout */
+            ev.events = EPOLLIN | EPOLLERR;
+            ev.data.ptr = sk_cb;
+
+            if (epoll_ctl(sk_cp->epoll_fd, EPOLL_CTL_MOD, sk_cb->sock_fd,
+                          &ev) == -1) 
+            {
+                dbg(WS_ERR, "failed to call epoll_ctl.\n");
+                *action = SOCK_ACT_CLOSE;
+                return rfail;
+            }
+        }
     }
 
     return ret;

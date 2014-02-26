@@ -585,6 +585,13 @@ static parse_act_t ws_parse_websock(ws_parser_t* wsp, s8* data, s32 len)
             dbg(WS_ERR, "failed parse at state: %d.\n", state);
     }
 
+    if(wsp->act == PARSE_ACT_OK || wsp->act == PARSE_ACT_OK)
+    {
+        mem_free(wsp->buf);
+        wsp->int_buf_len = 0;
+        wsp->buf = NULL;
+        wsp->data_offset = 0;
+    }
     return wsp->act;
 }
 

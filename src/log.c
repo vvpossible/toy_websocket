@@ -1,6 +1,6 @@
 #include "log.h"
 
-u8 sys_dbg_level = WS_WARN;
+u8 sys_dbg_level = WS_DBG;
 
 static logger_t* log_inst = NULL;
 
