@@ -156,6 +156,7 @@ static void* file_log_thread(void* argv)
     u32 wptr, rptr;
     fd_set rfds;
     struct timeval tv;
+    long tm = 0;    /* in micro second */
 
     while(1)
     {
@@ -163,7 +164,7 @@ static void* file_log_thread(void* argv)
         FD_ZERO(&rfds);
         FD_SET(logp->pipefd[0], &rfds);
 
-        tv.tv_sec = 1;          /* 1 seconds logging delay */
+        tv.tv_sec = 2;          /* 2 seconds logging delay */
         tv.tv_usec = 0;
 
         ret = select(logp->pipefd[0]+1, &rfds, NULL, NULL, &tv);
@@ -172,10 +173,7 @@ static void* file_log_thread(void* argv)
             if(errno == EINTR)
                 continue;
             else
-            {
-                sleep(1);       /* what's going on? */
-                continue;
-            }
+                assert(false);
         }
         else if( ret > 0) /* wake up to do work */
         {
@@ -189,9 +187,7 @@ static void* file_log_thread(void* argv)
                 assert(false);
         }
         else /* wakeup by time */
-        {
-            check_rotate(logp);
-        }
+        {;}
 
         /* snapshot the buffer */
         pthread_mutex_lock(&(lb->lock));
@@ -216,8 +212,17 @@ static void* file_log_thread(void* argv)
             cnt += file_log_write(logp->fd, lb->data + rptr, _LOG_BUF_SIZE - rptr);
             cnt += file_log_write(logp->fd, lb->data, wptr);
         }
-        /* barrier here? */
+
         lb->rptr = (lb->rptr + cnt) % _LOG_BUF_SIZE;
+
+        /* check log file size */
+        tm += ((2-tv.tv_sec)*1000*1000 - tv.tv_usec);
+
+        if(tm >= 2*1000*1000)
+        {
+            check_rotate(logp);
+            tm = 0;
+        }
     }
 
     return NULL;
@@ -240,6 +245,7 @@ static void file_do_log(logger_t* logger, const s8 *data, u32 len)
             *(logp->log_buf->data + lb->wptr) = *(data+i);
             lb->wptr = (lb->wptr+1) % _LOG_BUF_SIZE;
         }
+        write(logp->pipefd[1], "1", 1);
     }
     else
     {
@@ -247,10 +253,9 @@ static void file_do_log(logger_t* logger, const s8 *data, u32 len)
     }
     pthread_mutex_unlock(&(lb->lock));
 
-    if(lb_full && retry <3) /* wake up and try again */
+    if(lb_full && retry <3) 
     {
         retry++;
-        write(logp->pipefd[1], "1", 1);
         goto again;
     }
     return;

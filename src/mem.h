@@ -75,10 +75,14 @@ typedef struct mem_pool
 
 #ifdef USE_MEM_POOL
 
-extern void* mem_alloc(s32 size);
-extern void mem_free();
+extern void* mem_alloc_real(s32, const s8*, const s8*, s32);
+extern void mem_free_real(void* p, const s8*, const s8*, s32);
 extern s16 mem_init();
 extern void mem_deinit();
+
+#define mem_alloc(size) mem_alloc_real(size, __FILE__, __FUNCTION__, __LINE__)
+
+#define mem_free(p) mem_free_real(p, __FILE__, __FUNCTION__, __LINE__)
 
 #else
 

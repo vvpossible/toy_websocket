@@ -156,7 +156,7 @@ void mem_deinit()
 }
 
 
-void* mem_alloc(s32 size)
+void* mem_alloc_real(s32 size, const s8* file, const s8* func, s32 line)
 {
     s16 i;
     sub_pool_t* sp = NULL;
@@ -176,7 +176,7 @@ void* mem_alloc(s32 size)
 
     if(sp)
     {
-        dbg(WS_INFO, "alloc memory size %d from subpool %d.\n", size, i);
+        dbg(WS_INFO, "[%s:%s:%d] alloc memory size %d from subpool %d.\n", file, func, line, size, i);
         list_for_each_entry(c, &(sp->cache_head), cache_list)
         {
             if(c->n_free_blk == 0)
@@ -215,7 +215,7 @@ void* mem_alloc(s32 size)
     }
     else
     {
-        dbg(WS_WARN, "large memory %d, alloc through malloc.\n", size);
+        dbg(WS_WARN, "[%s:%s:%d] large memory %d, alloc through malloc.\n", file, func, line, size);
         mem_pool.n_sys_alloc++;
         mem_blk_t* lm = (mem_blk_t*)malloc(size + sizeof(mem_blk_t));
         if(lm == NULL)
@@ -251,7 +251,7 @@ static void* alloc_blk(cache_t* c)
     return (void*)blk->data;
 }
 
-void mem_free(void* p)
+void mem_free_real(void* p, const s8* file, const s8* func, s32 line)
 {
     assert(mem_pool.init);
 
@@ -261,7 +261,7 @@ void mem_free(void* p)
     if(c == NULL)
     {
         assert(blk->next == NULL);
-        dbg(WS_DBG, "free large memory to system.\n");
+        dbg(WS_DBG, "[%s:%s:%d] free large memory to system.\n", file, func, line);
         free((void*)blk);
         return;
     }
@@ -271,7 +271,7 @@ void mem_free(void* p)
     c->avail_blk = blk;
     c->n_free_blk++;
 
-    dbg(WS_DBG, "free memory from subpool %p.\n", c->sp);
+    dbg(WS_DBG, "[%s:%s:%d] free memory from subpool %p.\n", file, func, line, c->sp);
 
     if(c->n_free_blk == c->n_blk)
     {
